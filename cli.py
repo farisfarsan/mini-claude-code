@@ -33,7 +33,25 @@ def run_bash(command):
     output = result.stdout + result.stderr
     return output if output else "(no output)"
 
+def str_replace(path, old_str, new_str):
+    # Read the current file contents
+    with open(path, "r") as f:
+        content = f.read()
 
+    # Count how many times old_str appears — this is the precision check
+    count = content.count(old_str)
+
+    if count == 0:
+        return f"ERROR: old_str not found in {path}. Nothing was changed."
+    if count > 1:
+        return (f"ERROR: old_str appears {count} times in {path}. "
+                f"It must be unique. Add more surrounding context to make it match only once.")
+
+    # Exactly one match — safe to replace
+    new_content = content.replace(old_str, new_str)
+    with open(path, "w") as f:
+        f.write(new_content)
+    return f"Successfully replaced text in {path}."
 
 
 # ───────────────────────────────────────────────────────────
@@ -57,7 +75,7 @@ tools = [
             },
         },
     },
-{
+    {
         "type": "function",
         "function": {
             "name": "read_file",
@@ -85,6 +103,25 @@ tools = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "str_replace",
+            "description": ("Replace an exact string in a file with new text. "
+                            "old_str must appear EXACTLY once in the file. "
+                            "Include enough surrounding context to make it unique. "
+                            "Prefer this over write_file for editing existing files."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "The file to edit"},
+                    "old_str": {"type": "string", "description": "The exact text to find (must be unique)"},
+                    "new_str": {"type": "string", "description": "The text to replace it with"},
+                },
+                "required": ["path", "old_str", "new_str"],
+            },
+        },
+    },
 
 ]
 
@@ -96,6 +133,7 @@ available_tools = {
     "write_file": write_file,
     "read_file": read_file,
     "run_bash": run_bash,
+    "str_replace": str_replace,
 }
 
 messages = [
