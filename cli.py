@@ -1,5 +1,6 @@
 import os
 import json
+import tiktoken
 from openai import OpenAI
 from dotenv import load_dotenv
 from rich.console import Console
@@ -8,6 +9,64 @@ import subprocess
 load_dotenv()
 client = OpenAI()
 console = Console()
+
+# gpt-4o-mini uses the same encoding as gpt-4o ("o200k_base").
+encoding = tiktoken.get_encoding("o200k_base")
+
+# gpt-4o-mini pricing (USD per 1 MILLION tokens) — check current prices, these are approximate.
+PRICE_INPUT_PER_1M = 0.15    # cost of tokens we SEND
+PRICE_OUTPUT_PER_1M = 0.60   # cost of tokens we RECEIVE
+
+# Running totals across the whole session.
+usage = {"input": 0, "output": 0}
+
+CONTEXT_LIMIT = 800
+COMPACT_THRESHOLD = 0.80
+
+def count_tokens(messages):
+    total = 0
+    for m in messages:
+        # Messages are a mix: dicts (our messages) and ChatCompletionMessage
+        # objects (the AI's tool-request turns). Handle both.
+        if isinstance(m, dict):
+            content = m.get("content")
+        else:
+            content = getattr(m, "content", None)  # object attribute access
+
+        if isinstance(content, str):
+            total += len(encoding.encode(content))
+    return total
+
+
+def compact_history(messages):
+    system_msg = messages[0]
+
+    convo_text = ""
+    for m in messages[1:]:
+        if isinstance(m, dict):
+            role = m.get("role", "?")
+            content = m.get("content")
+        else:
+            role = getattr(m, "role", "?")
+            content = getattr(m, "content", None)
+        if isinstance(content, str):
+            convo_text += f"{role}: {content}\n"
+
+    console.print("[bold yellow]⟳ context near limit — compacting conversation...[/bold yellow]")
+
+    summary_resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "Summarize the following agent conversation concisely. Preserve key facts, decisions, file names, and any task state needed to continue the work. Be compact."},
+            {"role": "user", "content": convo_text},
+        ],
+    )
+    summary = summary_resp.choices[0].message.content
+
+    return [
+        system_msg,
+        {"role": "user", "content": f"[Summary of earlier conversation]\n{summary}"},
+    ]
 
 
 WORKSPACE = os.path.abspath("workspace")
@@ -183,6 +242,9 @@ messages = [
 
 console.print(Panel("Mini Claude Code — v0.2 (type 'exit' to quit)", style="bold green"))
 
+
+global session_input_tokens, session_output_tokens
+
 while True:
     user_input = console.input("[bold cyan]you > [/bold cyan]")
     if user_input.strip().lower() in ("exit", "quit"):
@@ -196,6 +258,9 @@ while True:
     # Keep calling the API until the AI stops requesting tools.
     # ───────────────────────────────────────────────────────
     while True:
+        if count_tokens(messages) >= CONTEXT_LIMIT * COMPACT_THRESHOLD:
+            messages = compact_history(messages)
+
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
@@ -219,8 +284,7 @@ while True:
 
                 # Run the REAL function
                 fn = available_tools[fn_name]
-                result = str(fn(**fn_args))
-                result=truncate_result(result)  
+                result = fn(**fn_args)
 
                 console.print(f"[dim]  result: {result[:200]}...[/dim]" if len(result) > 200 else f"[dim]  result: {result}[/dim]")
 
@@ -236,7 +300,28 @@ while True:
             continue
 
         else:
-            # No tool calls = the AI is done, this is its final text answer.
             console.print(f"[bold magenta]ai  > [/bold magenta]{msg.content}")
             messages.append({"role": "assistant", "content": msg.content})
-            break  # exit inner loop, go back to waiting for user input
+
+            # --- token + cost accounting ---
+            input_toks = count_tokens(messages)          # everything we've sent
+            output_toks = len(encoding.encode(msg.content or ""))  # this reply
+            usage["input"] += input_toks
+            usage["output"] += output_toks
+
+            cost = (usage["input"] / 1_000_000 * PRICE_INPUT_PER_1M
+                    + usage["output"] / 1_000_000 * PRICE_OUTPUT_PER_1M)
+
+            console.print(
+                f"[dim]  tokens this turn: ~{input_toks} in / {output_toks} out | "
+                f"session cost: ~${cost:.4f}[/dim]"
+            )
+
+            # --- compaction check ---
+            current_tokens = count_tokens(messages)
+            if current_tokens > CONTEXT_LIMIT * COMPACT_THRESHOLD:
+                messages = compact_history(messages)
+                after = count_tokens(messages)
+                console.print(f"[green]  compacted: {current_tokens} → {after} tokens[/green]")
+
+            break
