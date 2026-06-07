@@ -9,6 +9,11 @@ load_dotenv()
 client = OpenAI()
 console = Console()
 
+
+WORKSPACE = os.path.abspath("workspace")
+os.makedirs(WORKSPACE, exist_ok=True)
+
+
 # ───────────────────────────────────────────────────────────
 # 1. THE ACTUAL TOOL (a normal Python function)
 # This is what really runs on your machine when the AI asks.
@@ -22,16 +27,33 @@ def read_file(path):
     with open(path, "r") as f:
         return f.read()
 
-
 def run_bash(command):
-    # Run a shell command and capture its output.
-    # capture_output grabs stdout/stderr; text=True returns strings not bytes.
-    result = subprocess.run(
-        command, shell=True, capture_output=True, text=True, timeout=30
-    )
-    # Combine normal output and error output so the AI sees everything.
-    output = result.stdout + result.stderr
-    return output if output else "(no output)"
+    # Run the command inside a disposable Alpine container.
+    # Breakdown of the docker flags:
+    #   run --rm           -> start a container, delete it when done
+    #   --network=none     -> no internet access (stronger isolation)
+    #   -v WORKSPACE:/work -> mount our workspace folder as /work inside the container
+    #   -w /work           -> set the working directory to /work
+    #   alpine             -> the tiny Linux image to use
+    #   sh -c "command"    -> run the AI's command inside a shell
+    docker_cmd = [
+        "docker", "run", "--rm",
+        "--network=none",
+        "-v", f"{WORKSPACE}:/work",
+        "-w", "/work",
+        "alpine",
+        "sh", "-c", command,
+    ]
+    try:
+        result = subprocess.run(
+            docker_cmd, capture_output=True, text=True, timeout=30
+        )
+        output = result.stdout + result.stderr
+        return output if output else "(no output)"
+    except subprocess.TimeoutExpired:
+        return "ERROR: command timed out after 30 seconds."
+
+
 
 def str_replace(path, old_str, new_str):
     # Read the current file contents
@@ -137,7 +159,7 @@ available_tools = {
 }
 
 messages = [
-    {"role": "system", "content": "You are a helpful coding assistant with file tools."}
+    {"role": "system", "content": "You are a helpful coding assistant with file tools. All work happens inside the 'workspace' directory. When using run_bash, paths are relative to the workspace (mounted as /work in a sandbox). When reading or writing files directly, prefix paths with 'workspace/'."}
 ]
 
 console.print(Panel("Mini Claude Code — v0.2 (type 'exit' to quit)", style="bold green"))
