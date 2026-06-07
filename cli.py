@@ -20,7 +20,7 @@ PRICE_OUTPUT_PER_1M = 0.60   # cost of tokens we RECEIVE
 # Running totals across the whole session.
 usage = {"input": 0, "output": 0}
 
-CONTEXT_LIMIT = 800
+CONTEXT_LIMIT = 8000
 COMPACT_THRESHOLD = 0.80
 
 def count_tokens(messages):
@@ -39,8 +39,10 @@ def count_tokens(messages):
 
 
 def compact_history(messages):
+    # Keep the original system message untouched.
     system_msg = messages[0]
 
+    # Build a readable transcript of everything after the system message.
     convo_text = ""
     for m in messages[1:]:
         if isinstance(m, dict):
@@ -49,7 +51,7 @@ def compact_history(messages):
         else:
             role = getattr(m, "role", "?")
             content = getattr(m, "content", None)
-        if isinstance(content, str):
+        if isinstance(content, str) and content.strip():
             convo_text += f"{role}: {content}\n"
 
     console.print("[bold yellow]⟳ context near limit — compacting conversation...[/bold yellow]")
@@ -57,17 +59,24 @@ def compact_history(messages):
     summary_resp = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "Summarize the following agent conversation concisely. Preserve key facts, decisions, file names, and any task state needed to continue the work. Be compact."},
+            {"role": "system", "content": (
+                "Summarize this agent conversation concisely but completely. "
+                "PRESERVE: the user's current goal/task, any file names and paths, "
+                "decisions made, and what has been done so far vs. what still remains. "
+                "Write it so the agent can seamlessly continue the task."
+            )},
             {"role": "user", "content": convo_text},
         ],
     )
     summary = summary_resp.choices[0].message.content
 
-    return [
+    # Rebuild: system prompt + summary as an assistant 'memory' note.
+    # Using role 'assistant' for the summary keeps the next 'user' turn clean.
+    new_messages = [
         system_msg,
-        {"role": "user", "content": f"[Summary of earlier conversation]\n{summary}"},
+        {"role": "user", "content": f"[Summary of earlier conversation so far]\n{summary}\n\n(Continue helping based on this context.)"},
     ]
-
+    return new_messages
 
 WORKSPACE = os.path.abspath("workspace")
 os.makedirs(WORKSPACE, exist_ok=True)
@@ -257,10 +266,12 @@ while True:
     # 3. THE INNER LOOP (the heart of the agent)
     # Keep calling the API until the AI stops requesting tools.
     # ───────────────────────────────────────────────────────
+    loop_count = 0
     while True:
-        if count_tokens(messages) >= CONTEXT_LIMIT * COMPACT_THRESHOLD:
-            messages = compact_history(messages)
-
+        loop_count += 1
+        if loop_count > 15:
+            console.print("[bold red]⚠ loop cap reached (15 iterations) — stopping to prevent runaway execution.[/bold red]")
+            break
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
@@ -318,8 +329,10 @@ while True:
             )
 
             # --- compaction check ---
+            # Only compact at this resting point (after a final answer), and only
+            # if the history is genuinely long enough that summarizing helps.
             current_tokens = count_tokens(messages)
-            if current_tokens > CONTEXT_LIMIT * COMPACT_THRESHOLD:
+            if current_tokens > CONTEXT_LIMIT * COMPACT_THRESHOLD and len(messages) > 4:
                 messages = compact_history(messages)
                 after = count_tokens(messages)
                 console.print(f"[green]  compacted: {current_tokens} → {after} tokens[/green]")
