@@ -14,6 +14,25 @@ WORKSPACE = os.path.abspath("workspace")
 os.makedirs(WORKSPACE, exist_ok=True)
 
 
+
+MAX_TOOL_RESULT_CHARS = 5000  # cap on how much of a tool result we keep
+
+def truncate_result(text):
+    # If it's already small enough, leave it alone.
+    if len(text) <= MAX_TOOL_RESULT_CHARS:
+        return text
+
+    # Otherwise keep the head and the tail, drop the middle.
+    half = MAX_TOOL_RESULT_CHARS // 2
+    head = text[:half]
+    tail = text[-half:]
+    dropped = len(text) - MAX_TOOL_RESULT_CHARS
+    # The marker tells the MODEL that content was removed, so it can re-fetch
+    # more specifically if it needs the missing part.
+    marker = f"\n\n[... truncated {dropped} characters from the middle ...]\n\n"
+    return head + marker + tail
+
+
 # ───────────────────────────────────────────────────────────
 # 1. THE ACTUAL TOOL (a normal Python function)
 # This is what really runs on your machine when the AI asks.
@@ -200,16 +219,17 @@ while True:
 
                 # Run the REAL function
                 fn = available_tools[fn_name]
-                result = fn(**fn_args)
+                result = str(fn(**fn_args))
+                result=truncate_result(result)  
 
-                console.print(f"[dim]  result: {result}[/dim]")
+                console.print(f"[dim]  result: {result[:200]}...[/dim]" if len(result) > 200 else f"[dim]  result: {result}[/dim]")
 
                 # Send the result back to the AI as a 'tool' message.
                 # tool_call_id links this result to the specific request.
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
-                    "content": str(result),
+                    "content": result,
                 })
 
             # Loop again so the AI can see the results and decide next step.
