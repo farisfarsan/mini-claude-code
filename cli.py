@@ -101,11 +101,19 @@ def compact_history(messages):
         if isinstance(m, dict):
             role = m.get("role", "?")
             content = m.get("content")
+            tool_calls = m.get("tool_calls")
         else:
             role = getattr(m, "role", "?")
             content = getattr(m, "content", None)
+            tool_calls = getattr(m, "tool_calls", None)
         if isinstance(content, str) and content.strip():
             convo_text += f"{role}: {content}\n"
+        elif role == "assistant" and tool_calls:
+            names = [
+                (tc["function"]["name"] if isinstance(tc, dict) else tc.function.name)
+                for tc in tool_calls
+            ]
+            convo_text += f"assistant: [called tools: {', '.join(names)}]\n"
 
     console.print("[bold yellow]⟳ context near limit — compacting conversation...[/bold yellow]")
 
@@ -122,6 +130,8 @@ def compact_history(messages):
         ],
     )
     summary = summary_resp.choices[0].message.content
+    usage["input"] += summary_resp.usage.prompt_tokens
+    usage["output"] += summary_resp.usage.completion_tokens
 
     # Inject the summary as a user message so the next turn starts with a valid role sequence.
     new_messages = [
@@ -150,11 +160,12 @@ def truncate_result(text):
 
 
 def _workspace_path(path):
-    # Strip any leading 'workspace/' the model may have added, then
-    # resolve inside WORKSPACE so all file tools agree with run_bash.
     if path.startswith("workspace/") or path.startswith("workspace\\"):
         path = path[len("workspace/"):]
-    return os.path.join(WORKSPACE, path)
+    full = os.path.normpath(os.path.join(WORKSPACE, path))
+    if not (full == WORKSPACE or full.startswith(WORKSPACE + os.sep)):
+        raise ValueError(f"Path '{path}' escapes the workspace directory.")
+    return full
 
 def write_file(path, content):
     full = _workspace_path(path)
@@ -167,8 +178,13 @@ def write_file(path, content):
 
 def read_file(path):
     full = _workspace_path(path)
-    with open(full, "r") as f:
-        return f.read()
+    try:
+        with open(full, "r") as f:
+            return f.read()
+    except FileNotFoundError:
+        return f"ERROR: file not found: {full}"
+    except OSError as e:
+        return f"ERROR: could not read {full}: {e}"
 
 def run_bash(command):
     # Runs inside a disposable Alpine container with no network access and a mounted workspace.
@@ -188,12 +204,19 @@ def run_bash(command):
         return output if output else "(no output)"
     except subprocess.TimeoutExpired:
         return "ERROR: command timed out after 30 seconds."
+    except FileNotFoundError:
+        return "ERROR: Docker is not installed or not found in PATH."
 
 
 def str_replace(path, old_str, new_str):
     full = _workspace_path(path)
-    with open(full, "r") as f:
-        content = f.read()
+    try:
+        with open(full, "r") as f:
+            content = f.read()
+    except FileNotFoundError:
+        return f"ERROR: file not found: {full}"
+    except OSError as e:
+        return f"ERROR: could not read {full}: {e}"
 
     count = content.count(old_str)
 
@@ -293,6 +316,9 @@ if "--list-sessions" in sys.argv:
 
 if "--resume" in sys.argv:
     idx = sys.argv.index("--resume")
+    if idx + 1 >= len(sys.argv):
+        console.print("[red]--resume requires a session id argument.[/red]")
+        sys.exit(1)
     session_id = sys.argv[idx + 1]
     messages = load_session(session_id)
     console.print(f"[green]Resumed session: {session_id}[/green]")
@@ -300,10 +326,7 @@ else:
     session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
     console.print(f"[dim]New session: {session_id}[/dim]")
 
-console.print(Panel("Mini Claude Code — v0.2 (type 'exit' to quit)", style="bold green"))
-
-
-global session_input_tokens, session_output_tokens
+console.print(Panel("Mini Claude Code — v0.6 (type 'exit' to quit)", style="bold green"))
 
 while True:
     user_input = console.input("[bold cyan]you > [/bold cyan]")
@@ -355,8 +378,8 @@ while True:
             console.print(f"[bold magenta]ai  > [/bold magenta]{msg.content}")
             messages.append({"role": "assistant", "content": msg.content})
 
-            input_toks = count_tokens(messages)
-            output_toks = len(encoding.encode(msg.content or ""))
+            input_toks = response.usage.prompt_tokens
+            output_toks = response.usage.completion_tokens
             usage["input"] += input_toks
             usage["output"] += output_toks
 
