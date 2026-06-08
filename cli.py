@@ -149,13 +149,25 @@ def truncate_result(text):
     return head + marker + tail
 
 
+def _workspace_path(path):
+    # Strip any leading 'workspace/' the model may have added, then
+    # resolve inside WORKSPACE so all file tools agree with run_bash.
+    if path.startswith("workspace/") or path.startswith("workspace\\"):
+        path = path[len("workspace/"):]
+    return os.path.join(WORKSPACE, path)
+
 def write_file(path, content):
-    with open(path, "w") as f:
+    full = _workspace_path(path)
+    parent = os.path.dirname(full)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(full, "w") as f:
         f.write(content)
-    return f"Wrote {len(content)} bytes to {path}"
+    return f"Wrote {len(content)} bytes to {full}"
 
 def read_file(path):
-    with open(path, "r") as f:
+    full = _workspace_path(path)
+    with open(full, "r") as f:
         return f.read()
 
 def run_bash(command):
@@ -165,7 +177,7 @@ def run_bash(command):
         "--network=none",
         "-v", f"{WORKSPACE}:/work",
         "-w", "/work",
-        "alpine",
+        "python:3.11-alpine",
         "sh", "-c", command,
     ]
     try:
@@ -179,21 +191,22 @@ def run_bash(command):
 
 
 def str_replace(path, old_str, new_str):
-    with open(path, "r") as f:
+    full = _workspace_path(path)
+    with open(full, "r") as f:
         content = f.read()
 
     count = content.count(old_str)
 
     if count == 0:
-        return f"ERROR: old_str not found in {path}. Nothing was changed."
+        return f"ERROR: old_str not found in {full}. Nothing was changed."
     if count > 1:
-        return (f"ERROR: old_str appears {count} times in {path}. "
+        return (f"ERROR: old_str appears {count} times in {full}. "
                 f"It must be unique. Add more surrounding context to make it match only once.")
 
     new_content = content.replace(old_str, new_str)
-    with open(path, "w") as f:
+    with open(full, "w") as f:
         f.write(new_content)
-    return f"Successfully replaced text in {path}."
+    return f"Successfully replaced text in {full}."
 
 
 tools = [
@@ -270,7 +283,7 @@ available_tools = {
 }
 
 messages = [
-    {"role": "system", "content": "You are a helpful coding assistant with file tools. All work happens inside the 'workspace' directory. When using run_bash, paths are relative to the workspace (mounted as /work in a sandbox). When reading or writing files directly, prefix paths with 'workspace/'."}
+    {"role": "system", "content": "You are a helpful coding assistant with file tools. All work happens inside the 'workspace' directory. For write_file, read_file, and str_replace, pass plain filenames or relative paths (e.g. 'hello.py', 'src/utils.py') — do NOT prefix with 'workspace/'. For run_bash, paths are also relative to the workspace (mounted as /work in the sandbox), so use the same plain paths there too (e.g. 'cat hello.py')."}
 ]
 
 
