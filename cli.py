@@ -6,9 +6,19 @@ from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
 import subprocess  
+import sys
+import uuid
+from datetime import datetime
+
 load_dotenv()
 client = OpenAI()
 console = Console()
+
+
+# Folder where conversations are saved.
+HISTORY_DIR = ".history"
+os.makedirs(HISTORY_DIR, exist_ok=True)
+
 
 # gpt-4o-mini uses the same encoding as gpt-4o ("o200k_base").
 encoding = tiktoken.get_encoding("o200k_base")
@@ -22,6 +32,62 @@ usage = {"input": 0, "output": 0}
 
 CONTEXT_LIMIT = 8000
 COMPACT_THRESHOLD = 0.80
+
+
+def normalize_messages(messages):
+    # Convert any ChatCompletionMessage objects into plain dicts so they
+    # can be saved as JSON. Plain dicts pass through unchanged.
+    clean = []
+    for m in messages:
+        if isinstance(m, dict):
+            clean.append(m)
+        else:
+            # It's a ChatCompletionMessage object. Rebuild the parts we need.
+            entry = {"role": getattr(m, "role", "assistant")}
+            content = getattr(m, "content", None)
+            if content is not None:
+                entry["content"] = content
+            # Preserve tool calls if present (so resumed history stays valid).
+            tool_calls = getattr(m, "tool_calls", None)
+            if tool_calls:
+                entry["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                    }
+                    for tc in tool_calls
+                ]
+            clean.append(entry)
+    return clean
+
+def save_session(session_id, messages):
+    path = os.path.join(HISTORY_DIR, f"{session_id}.json")
+    with open(path, "w") as f:
+        json.dump(normalize_messages(messages), f, indent=2)
+
+def load_session(session_id):
+    path = os.path.join(HISTORY_DIR, f"{session_id}.json")
+    if not os.path.exists(path):
+        console.print(f"[red]No session found with id: {session_id}[/red]")
+        sys.exit(1)
+    with open(path, "r") as f:
+        return json.load(f)
+
+def list_sessions():
+    files = sorted(f for f in os.listdir(HISTORY_DIR) if f.endswith(".json"))
+    if not files:
+        console.print("[dim]No saved sessions yet.[/dim]")
+        return
+    console.print("[bold]Saved sessions:[/bold]")
+    for f in files:
+        console.print(f"  {f[:-5]}")  # strip the .json
+
+
+
+
+
+
 
 def count_tokens(messages):
     total = 0
@@ -249,6 +315,22 @@ messages = [
     {"role": "system", "content": "You are a helpful coding assistant with file tools. All work happens inside the 'workspace' directory. When using run_bash, paths are relative to the workspace (mounted as /work in a sandbox). When reading or writing files directly, prefix paths with 'workspace/'."}
 ]
 
+
+# --- handle CLI flags: --list-sessions and --resume <id> ---
+if "--list-sessions" in sys.argv:
+    list_sessions()
+    sys.exit(0)
+
+if "--resume" in sys.argv:
+    idx = sys.argv.index("--resume")
+    session_id = sys.argv[idx + 1]      # the id comes right after the flag
+    messages = load_session(session_id)  # replace fresh history with saved one
+    console.print(f"[green]Resumed session: {session_id}[/green]")
+else:
+    # Brand new session — make an id from the current timestamp.
+    session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+    console.print(f"[dim]New session: {session_id}[/dim]")
+
 console.print(Panel("Mini Claude Code — v0.2 (type 'exit' to quit)", style="bold green"))
 
 
@@ -304,7 +386,7 @@ while True:
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
-                    "content": result,
+                    "content": truncate_result(result),
                 })
 
             # Loop again so the AI can see the results and decide next step.
@@ -337,4 +419,5 @@ while True:
                 after = count_tokens(messages)
                 console.print(f"[green]  compacted: {current_tokens} → {after} tokens[/green]")
 
+            save_session(session_id, messages)
             break
