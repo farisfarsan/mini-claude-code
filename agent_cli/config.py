@@ -6,11 +6,13 @@ WORKSPACE = os.path.abspath("workspace")
 
 MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
+# o200k_base covers both gpt-4o-mini and gpt-4o
 encoding = tiktoken.get_encoding("o200k_base")
 
 PRICE_INPUT_PER_1M = 0.15
 PRICE_OUTPUT_PER_1M = 0.60
 
+# kept low so compaction fires in practice; the model itself supports 128k
 CONTEXT_LIMIT = 8000
 COMPACT_THRESHOLD = 0.80
 

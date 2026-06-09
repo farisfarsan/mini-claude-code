@@ -11,6 +11,7 @@ def truncate_result(text: str) -> str:
         return text
     half = MAX_TOOL_RESULT_CHARS // 2
     dropped = len(text) - MAX_TOOL_RESULT_CHARS
+    # keep both ends — errors often appear at the bottom, not just the top
     marker = f"\n\n[... truncated {dropped} characters from the middle ...]\n\n"
     return text[:half] + marker + text[-half:]
 
@@ -19,6 +20,7 @@ def _workspace_path(path: str) -> str:
     if path.startswith("workspace/") or path.startswith("workspace\\"):
         path = path[len("workspace/"):]
     full = os.path.normpath(os.path.join(WORKSPACE, path))
+    # normpath resolves ".." — check the result still lives inside WORKSPACE
     if not (full == WORKSPACE or full.startswith(WORKSPACE + os.sep)):
         raise ValueError(f"Path '{path}' escapes the workspace directory.")
     return full
@@ -48,8 +50,8 @@ def read_file(path: str) -> str:
 def run_bash(command: str) -> str:
     docker_cmd = [
         "docker", "run", "--rm",
-        "--network=none",
-        "--read-only",
+        "--network=none",   # no outbound traffic
+        "--read-only",      # root fs immutable; only /work and /tmp are writable
         "--memory=256m",
         "--pids-limit=128",
         "--cpus=1",
@@ -83,6 +85,7 @@ def str_replace(path: str, old_str: str, new_str: str) -> str:
     if count == 0:
         return f"ERROR: old_str not found in {full}. Nothing was changed."
     if count > 1:
+        # refuse ambiguous edits — the model must include enough context to be unique
         return (
             f"ERROR: old_str appears {count} times in {full}. "
             "It must be unique. Add more surrounding context to make it match only once."

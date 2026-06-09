@@ -3,6 +3,7 @@ from datetime import datetime
 
 from dotenv import load_dotenv
 
+# must run before agent_cli imports — OpenAI client is initialised at module load time
 load_dotenv()
 
 from rich.console import Console

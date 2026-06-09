@@ -11,6 +11,7 @@ def count_tokens(messages: list) -> int:
 
 
 def should_compact(messages: list) -> bool:
+    # len > 4 guard avoids compacting a near-empty session where summary would be larger than the original
     return count_tokens(messages) > CONTEXT_LIMIT * COMPACT_THRESHOLD and len(messages) > 4
 
 
@@ -53,6 +54,7 @@ def compact_history(messages: list, client, usage: dict, console) -> list:
     usage["input"] += resp.usage.prompt_tokens
     usage["output"] += resp.usage.completion_tokens
 
+    # summary is injected as a user message so the next turn starts with a valid role sequence
     return [
         system_msg,
         {

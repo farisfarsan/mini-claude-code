@@ -12,6 +12,7 @@ os.makedirs(SESSIONS_DIR, exist_ok=True)
 
 
 def normalize_messages(messages: list) -> list:
+    # the SDK returns ChatCompletionMessage objects which aren't JSON-serialisable
     clean = []
     for m in messages:
         if isinstance(m, dict):

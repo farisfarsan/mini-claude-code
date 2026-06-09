@@ -21,6 +21,7 @@ MAX_LOOP_ITERATIONS = 15
 
 
 def _chat(**kwargs):
+    # retries handle transient rate-limits and network blips; 4 attempts = up to 7s of back-off
     for attempt in range(4):
         try:
             return client.chat.completions.create(**kwargs)
@@ -39,6 +40,7 @@ def run_turn(session_id: str, messages: list, usage: dict) -> list:
             tool_choice="auto",
         )
         msg = response.choices[0].message
+        # accumulate on every API call, not just the final reply — tool-call rounds cost tokens too
         usage["input"] += response.usage.prompt_tokens
         usage["output"] += response.usage.completion_tokens
 
@@ -74,6 +76,7 @@ def run_turn(session_id: str, messages: list, usage: dict) -> list:
             f"session cost: ~${cost:.4f}[/dim]"
         )
 
+        # compact only after a final answer — never mid-tool-call, or the agent loses its task
         if should_compact(messages):
             before = count_tokens(messages)
             messages = compact_history(messages, client, usage, console)
