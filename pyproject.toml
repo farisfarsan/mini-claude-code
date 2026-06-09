@@ -1,7 +1,7 @@
 [project]
 name = "agent-cli"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.6.0"
+description = "A minimal AI coding agent built from scratch — tool-use loop, Docker sandboxing, and context management without frameworks."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

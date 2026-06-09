@@ -2,4 +2,7 @@
 venv/
 .venv/
 .history/
+sessions/
 workspace/
+__pycache__/
+*.pyc

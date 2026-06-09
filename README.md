@@ -26,10 +26,11 @@ cd mini-claude-code
 uv sync   # or: pip install openai rich python-dotenv tiktoken
 ```
 
-Then add your OpenAI API key:
+Copy the env template and add your OpenAI API key:
 
 ```bash
-echo "OPENAI_API_KEY=sk-..." > .env
+cp .env.example .env
+# then edit .env and set OPENAI_API_KEY=sk-...
 ```
 
 Docker must be installed and running (used for bash sandboxing).
@@ -37,9 +38,9 @@ Docker must be installed and running (used for bash sandboxing).
 ## Usage
 
 ```bash
-uv run cli.py                          # start a new session
-uv run cli.py --list-sessions          # show saved sessions
-uv run cli.py --resume 20260608-092331 # resume a saved session
+uv run main.py                          # start a new session
+uv run main.py --list-sessions          # show saved sessions
+uv run main.py --resume 20260608-092331 # resume a saved session
 ```
 
 ## Example sessions
