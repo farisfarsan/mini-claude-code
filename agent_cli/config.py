@@ -11,7 +11,7 @@ encoding = tiktoken.get_encoding("o200k_base")
 PRICE_INPUT_PER_1M = 0.15
 PRICE_OUTPUT_PER_1M = 0.60
 
-CONTEXT_LIMIT = 8000  # intentionally low to make compaction fire in demos; gpt-4o-mini supports 128k
+CONTEXT_LIMIT = 8000
 COMPACT_THRESHOLD = 0.80
 
 MAX_TOOL_RESULT_CHARS = 5000
