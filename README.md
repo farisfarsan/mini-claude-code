@@ -101,7 +101,7 @@ Bash execution is isolated:
 agent's bash command
    │
    ▼
-docker run --rm --network=none -v workspace:/work -w /work alpine sh -c "<command>"
+docker run --rm --network=none -v workspace:/work -w /work python:3.11-alpine sh -c "<command>"
    │
    ▼
 output (host filesystem untouched)
