@@ -77,6 +77,25 @@ def run_bash(command: str) -> str:
         return "ERROR: Docker is not installed or not found in PATH."
 
 
+def _apply_edit(content: str, old_str: str, new_str: str, replace_all: bool, idx: int) -> str:
+    """Apply one find/replace to a string. Raises ValueError with a clear,
+    recoverable message if the edit can't be applied safely."""
+    count = content.count(old_str)
+    if count == 0:
+        return _raise_edit(idx, f"text not found: {old_str!r}")
+    if count > 1 and not replace_all:
+        return _raise_edit(
+            idx,
+            f"text appears {count} times — add more surrounding context to make it "
+            "unique, or set replace_all=true to change every occurrence.",
+        )
+    return content.replace(old_str, new_str) if replace_all else content.replace(old_str, new_str, 1)
+
+
+def _raise_edit(idx: int, msg: str) -> str:
+    raise ValueError(f"edit #{idx}: {msg}")
+
+
 def str_replace(path: str, old_str: str, new_str: str) -> str:
     full = _workspace_path(path)
     try:
@@ -87,17 +106,47 @@ def str_replace(path: str, old_str: str, new_str: str) -> str:
     except OSError as e:
         return f"ERROR: could not read {full}: {e}"
 
-    count = content.count(old_str)
-    if count == 0:
-        return f"ERROR: old_str not found in {full}. Nothing was changed."
-    if count > 1:
-        return (
-            f"ERROR: old_str appears {count} times in {full}. "
-            "It must be unique. Add more surrounding context to make it match only once."
-        )
+    try:
+        content = _apply_edit(content, old_str, new_str, replace_all=False, idx=1)
+    except ValueError as e:
+        return f"ERROR: {e}. Nothing was changed."
     with open(full, "w") as f:
-        f.write(content.replace(old_str, new_str, 1))
+        f.write(content)
     return f"Successfully replaced text in {full}."
+
+
+def multi_edit(path: str, edits: list) -> str:
+    """Apply several edits to one file, in order, all-or-nothing.
+    If any edit fails, the file is left completely untouched."""
+    full = _workspace_path(path)
+    try:
+        with open(full, "r") as f:
+            content = f.read()
+    except FileNotFoundError:
+        return f"ERROR: file not found: {full}"
+    except OSError as e:
+        return f"ERROR: could not read {full}: {e}"
+
+    if not edits:
+        return "ERROR: no edits provided."
+
+    original = content
+    try:
+        for i, edit in enumerate(edits, 1):
+            if "old_str" not in edit or "new_str" not in edit:
+                return f"ERROR: edit #{i} is missing 'old_str' or 'new_str'. Nothing was changed."
+            content = _apply_edit(
+                content, edit["old_str"], edit["new_str"], edit.get("replace_all", False), i
+            )
+    except ValueError as e:
+        # atomic: a failure anywhere means we write nothing
+        return f"ERROR: {e}. No changes were written — fix this edit and resend all edits."
+
+    if content == original:
+        return "No changes — the result is identical to the original."
+    with open(full, "w") as f:
+        f.write(content)
+    return f"Applied {len(edits)} edit(s) to {_rel(full)}."
 
 
 def _rel(full: str) -> str:
@@ -257,6 +306,40 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "multi_edit",
+            "description": (
+                "Make several edits to ONE file in a single call, applied in order, all-or-nothing. "
+                "Prefer this over str_replace when you need multiple changes, or when the same text "
+                "appears more than once. If any edit fails, the file is left unchanged."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File to edit"},
+                    "edits": {
+                        "type": "array",
+                        "description": "Edits applied in order. Later edits can target text created by earlier ones.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "old_str": {"type": "string", "description": "Exact text to find"},
+                                "new_str": {"type": "string", "description": "Replacement text"},
+                                "replace_all": {
+                                    "type": "boolean",
+                                    "description": "Replace every occurrence of old_str (default false).",
+                                },
+                            },
+                            "required": ["old_str", "new_str"],
+                        },
+                    },
+                },
+                "required": ["path", "edits"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_files",
             "description": (
                 "List files in the workspace so you can see what exists before reading or editing. "
@@ -300,6 +383,7 @@ TOOL_MAP = {
     "read_file": read_file,
     "run_bash": run_bash,
     "str_replace": str_replace,
+    "multi_edit": multi_edit,
     "list_files": list_files,
     "search_files": search_files,
 }
