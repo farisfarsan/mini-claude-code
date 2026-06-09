@@ -18,6 +18,32 @@ with open(_PROMPT_PATH) as _f:
 
 MAX_LOOP_ITERATIONS = 15
 
+# Tools that can change the system — these prompt the user before running.
+# Read-only tools (read_file, list_files, search_files) are never gated.
+REQUIRES_APPROVAL = {"run_bash", "write_file", "str_replace", "multi_edit"}
+
+# Tools the user has chosen to "always" allow, remembered for this session only.
+_approved_tools: set[str] = set()
+
+
+def check_permission(fn_name: str, approvals: set, ask) -> bool:
+    """Decide whether a tool call may run.
+
+    Read-only (or already 'always'-approved) tools pass straight through.
+    Destructive tools ask the user. `ask` is a callable returning the user's
+    raw answer string — it's injected so this logic can be tested without a
+    real terminal prompt.
+    """
+    if fn_name not in REQUIRES_APPROVAL or fn_name in approvals:
+        return True
+    answer = ask().strip().lower()
+    if answer in ("a", "always"):
+        approvals.add(fn_name)
+        return True
+    if answer in ("n", "no"):
+        return False
+    return True  # default (y / yes / Enter) = allow once
+
 
 def run_turn(session_id: str, messages: list, usage: dict) -> list:
     for _ in range(MAX_LOOP_ITERATIONS):
@@ -35,6 +61,26 @@ def run_turn(session_id: str, messages: list, usage: dict) -> list:
                 fn_name = tool_call.function.name
                 fn_args = json.loads(tool_call.function.arguments)
                 console.print(f"[yellow]→ calling {fn_name}({fn_args})[/yellow]")
+
+                allowed = check_permission(
+                    fn_name,
+                    _approved_tools,
+                    ask=lambda: console.input(
+                        "  Allow? [Y]es / [n]o / [a]lways this session: ", markup=False
+                    ),
+                )
+                if not allowed:
+                    console.print("[red]  ✗ denied by user[/red]")
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": (
+                            "DENIED by the user. Do not retry this exact action; "
+                            "ask how to proceed or try a different approach."
+                        ),
+                    })
+                    continue
+
                 try:
                     result = TOOL_MAP[fn_name](**fn_args)
                 except Exception as e:  # noqa: BLE001 — surface any tool error to the model
