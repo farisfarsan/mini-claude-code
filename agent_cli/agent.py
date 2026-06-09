@@ -1,11 +1,10 @@
 import json
 import os
-import time
 
-from openai import APIConnectionError, OpenAI, RateLimitError
+from openai import OpenAI
 from rich.console import Console
 
-from agent_cli.config import MODEL, PRICE_INPUT_PER_1M, PRICE_OUTPUT_PER_1M
+from agent_cli.config import PRICE_INPUT_PER_1M, PRICE_OUTPUT_PER_1M
 from agent_cli.context import compact_history, count_tokens, should_compact
 from agent_cli.session import save_session
 from agent_cli.tools import TOOL_MAP, TOOL_SCHEMAS, truncate_result
@@ -20,29 +19,15 @@ with open(_PROMPT_PATH) as _f:
 MAX_LOOP_ITERATIONS = 15
 
 
-def _chat(**kwargs):
-    # retries handle transient rate-limits and network blips; 4 attempts = up to 7s of back-off
-    for attempt in range(4):
-        try:
-            return client.chat.completions.create(**kwargs)
-        except (RateLimitError, APIConnectionError):
-            if attempt == 3:
-                raise
-            time.sleep(2 ** attempt)
-
-
 def run_turn(session_id: str, messages: list, usage: dict) -> list:
     for _ in range(MAX_LOOP_ITERATIONS):
-        response = _chat(
-            model=MODEL,
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
             messages=messages,
             tools=TOOL_SCHEMAS,
             tool_choice="auto",
         )
         msg = response.choices[0].message
-        # accumulate on every API call, not just the final reply — tool-call rounds cost tokens too
-        usage["input"] += response.usage.prompt_tokens
-        usage["output"] += response.usage.completion_tokens
 
         if msg.tool_calls:
             messages.append(msg)
@@ -50,7 +35,10 @@ def run_turn(session_id: str, messages: list, usage: dict) -> list:
                 fn_name = tool_call.function.name
                 fn_args = json.loads(tool_call.function.arguments)
                 console.print(f"[yellow]→ calling {fn_name}({fn_args})[/yellow]")
-                result = TOOL_MAP[fn_name](**fn_args)
+                try:
+                    result = TOOL_MAP[fn_name](**fn_args)
+                except Exception as e:  # noqa: BLE001 — surface any tool error to the model
+                    result = f"ERROR: {fn_name} failed: {e}"
                 console.print(
                     f"[dim]  result: {result[:200]}...[/dim]"
                     if len(result) > 200
@@ -66,17 +54,20 @@ def run_turn(session_id: str, messages: list, usage: dict) -> list:
         console.print(f"[bold magenta]ai  > [/bold magenta]{msg.content}")
         messages.append({"role": "assistant", "content": msg.content})
 
+        input_toks = response.usage.prompt_tokens
+        output_toks = response.usage.completion_tokens
+        usage["input"] += input_toks
+        usage["output"] += output_toks
+
         cost = (
             usage["input"] / 1_000_000 * PRICE_INPUT_PER_1M
             + usage["output"] / 1_000_000 * PRICE_OUTPUT_PER_1M
         )
         console.print(
-            f"[dim]  tokens this turn: ~{response.usage.prompt_tokens} in / "
-            f"{response.usage.completion_tokens} out | "
+            f"[dim]  tokens this turn: ~{input_toks} in / {output_toks} out | "
             f"session cost: ~${cost:.4f}[/dim]"
         )
 
-        # compact only after a final answer — never mid-tool-call, or the agent loses its task
         if should_compact(messages):
             before = count_tokens(messages)
             messages = compact_history(messages, client, usage, console)
