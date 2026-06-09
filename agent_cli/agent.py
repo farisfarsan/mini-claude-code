@@ -1,10 +1,11 @@
 import json
 import os
+import time
 
-from openai import OpenAI
+from openai import APIConnectionError, OpenAI, RateLimitError
 from rich.console import Console
 
-from agent_cli.config import PRICE_INPUT_PER_1M, PRICE_OUTPUT_PER_1M
+from agent_cli.config import MODEL, PRICE_INPUT_PER_1M, PRICE_OUTPUT_PER_1M
 from agent_cli.context import compact_history, count_tokens, should_compact
 from agent_cli.session import save_session
 from agent_cli.tools import TOOL_MAP, TOOL_SCHEMAS, truncate_result
@@ -19,10 +20,20 @@ with open(_PROMPT_PATH) as _f:
 MAX_LOOP_ITERATIONS = 15
 
 
+def _chat(**kwargs):
+    for attempt in range(4):
+        try:
+            return client.chat.completions.create(**kwargs)
+        except (RateLimitError, APIConnectionError):
+            if attempt == 3:
+                raise
+            time.sleep(2 ** attempt)
+
+
 def run_turn(session_id: str, messages: list, usage: dict) -> list:
     for _ in range(MAX_LOOP_ITERATIONS):
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
+        response = _chat(
+            model=MODEL,
             messages=messages,
             tools=TOOL_SCHEMAS,
             tool_choice="auto",

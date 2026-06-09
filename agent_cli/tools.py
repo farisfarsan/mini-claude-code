@@ -49,6 +49,11 @@ def run_bash(command: str) -> str:
     docker_cmd = [
         "docker", "run", "--rm",
         "--network=none",
+        "--read-only",
+        "--memory=256m",
+        "--pids-limit=128",
+        "--cpus=1",
+        "--tmpfs=/tmp",
         "-v", f"{WORKSPACE}:/work",
         "-w", "/work",
         "python:3.11-alpine",

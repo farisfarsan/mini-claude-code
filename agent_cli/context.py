@@ -1,4 +1,4 @@
-from agent_cli.config import encoding, CONTEXT_LIMIT, COMPACT_THRESHOLD
+from agent_cli.config import MODEL, encoding, CONTEXT_LIMIT, COMPACT_THRESHOLD
 
 
 def count_tokens(messages: list) -> int:
@@ -35,7 +35,7 @@ def compact_history(messages: list, client, usage: dict, console) -> list:
     console.print("[bold yellow]⟳ context near limit — compacting conversation...[/bold yellow]")
 
     resp = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=MODEL,
         messages=[
             {
                 "role": "system",

@@ -11,7 +11,7 @@ The point of this project wasn't the LLM. It was understanding how agentic syste
 
 - **Tool-use loop** — the agent calls the model, which requests tools (bash, read, write, edit); the host executes them and feeds results back, looping until the task is done.
 - **Four tools** — `run_bash`, `read_file`, `write_file`, and `str_replace` (surgical single-match editing).
-- **Docker sandboxing** — every bash command runs in a disposable, network-isolated Alpine container with a mounted workspace and a 30-second timeout. The agent cannot touch the host filesystem.
+- **Docker sandboxing** — every bash command runs in a disposable `python:3.11-alpine` container with no network, a read-only root filesystem, memory/CPU/PID caps, and only the workspace bind-mounted as writable. The agent cannot touch the host filesystem.
 - **Tool-result truncation** — large outputs are trimmed head-and-tail (not just the first N chars) so the important parts at both ends survive.
 - **Token counting + cost** — running token and cost estimate per turn via tiktoken.
 - **Context compaction** — at 80% of the context limit, the conversation is summarized and restarted from the summary, enabling arbitrarily long sessions.
@@ -101,7 +101,8 @@ Bash execution is isolated:
 agent's bash command
    │
    ▼
-docker run --rm --network=none -v workspace:/work -w /work python:3.11-alpine sh -c "<command>"
+docker run --rm --network=none --read-only --memory=256m --pids-limit=128 --cpus=1 \
+       --tmpfs=/tmp -v workspace:/work -w /work python:3.11-alpine sh -c "<command>"
    │
    ▼
 output (host filesystem untouched)
