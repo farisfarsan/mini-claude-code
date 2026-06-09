@@ -28,6 +28,8 @@ def run_turn(session_id: str, messages: list, usage: dict) -> list:
             tool_choice="auto",
         )
         msg = response.choices[0].message
+        usage["input"] += response.usage.prompt_tokens
+        usage["output"] += response.usage.completion_tokens
 
         if msg.tool_calls:
             messages.append(msg)
@@ -51,17 +53,13 @@ def run_turn(session_id: str, messages: list, usage: dict) -> list:
         console.print(f"[bold magenta]ai  > [/bold magenta]{msg.content}")
         messages.append({"role": "assistant", "content": msg.content})
 
-        input_toks = response.usage.prompt_tokens
-        output_toks = response.usage.completion_tokens
-        usage["input"] += input_toks
-        usage["output"] += output_toks
-
         cost = (
             usage["input"] / 1_000_000 * PRICE_INPUT_PER_1M
             + usage["output"] / 1_000_000 * PRICE_OUTPUT_PER_1M
         )
         console.print(
-            f"[dim]  tokens this turn: ~{input_toks} in / {output_toks} out | "
+            f"[dim]  tokens this turn: ~{response.usage.prompt_tokens} in / "
+            f"{response.usage.completion_tokens} out | "
             f"session cost: ~${cost:.4f}[/dim]"
         )
 
